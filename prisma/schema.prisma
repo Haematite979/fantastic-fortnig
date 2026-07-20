@@ -1,0 +1,164 @@
+// AI-powered CRM schema
+// Tracks customers, deals, activities, notes, AI-generated insights,
+// the workspace user, and their subscription.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Workspace user & subscription ───────────────────────────────────
+// Lightweight (no auth) — a single demo user represents the signed-in
+// workspace owner. Their subscription tracks the active plan.
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  companyName   String?
+  role          String?
+  avatarColor   String    @default("#10b981")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  subscription  Subscription?
+}
+
+model Subscription {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  plan             String   @default("free") // free | starter | pro | enterprise
+  status           String   @default("active") // active | past_due | canceled | trialing
+  monthlyAmount    Float    @default(0)
+  currentPeriodEnd DateTime?
+  cancelAtPeriodEnd Boolean @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  name        String
+  email       String   @unique
+  phone       String?
+  company     String?
+  jobTitle    String?
+  industry    String?
+  location    String?
+  status      String   @default("lead") // lead | active | churned | prospect
+  tags        String   @default("") // comma-separated tags
+  lifetimeValue Float  @default(0)
+  notes       String   @default("")
+  avatarColor String   @default("#10b981")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals       Deal[]
+  activities  Activity[]
+  insights    Insight[]
+}
+
+model Deal {
+  id          String   @id @default(cuid())
+  title       String
+  customerId  String
+  value       Float
+  stage       String   @default("lead") // lead | qualified | proposal | negotiation | won | lost
+  probability Float    @default(20) // 0-100
+  expectedClose DateTime?
+  source      String?  // website | referral | cold-outreach | event | other
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  activities  Activity[]
+}
+
+model Activity {
+  id          String   @id @default(cuid())
+  customerId  String
+  dealId      String?
+  type        String   // call | email | meeting | note | task | demo
+  title       String
+  description String?
+  outcome     String?  // successful | no-answer | follow-up | negative
+  scheduledAt DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  deal        Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+}
+
+model Insight {
+  id          String   @id @default(cuid())
+  customerId  String?
+  type        String   // opportunity | risk | recommendation | trend | alert
+  priority    String   @default("medium") // high | medium | low
+  title       String
+  body        String
+  action      String?  // suggested action
+  impact      String?  // expected impact (e.g. "+₦5,000", "+12% retention")
+  dismissed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+// ─── OPay Integration ────────────────────────────────────────────────
+// Stores OPay merchant credentials (AES-256-GCM encrypted at rest).
+// Never returned to the client in plaintext — only a masked preview.
+model OpaySetting {
+  id            String   @id @default(cuid())
+  merchantId    String
+  apiKeyEnc     String   // AES-256-GCM encrypted
+  secretKeyEnc  String   // AES-256-GCM encrypted
+  environment   String   @default("sandbox") // sandbox | production
+  webhookSecret String?  // for verifying incoming webhooks
+  isActive      Boolean  @default(true)
+  lastSyncAt    DateTime?
+  lastAuditAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Fetched OPay transactions — one row per OPay transaction id
+model OpayTransaction {
+  id            String   @id @default(cuid())
+  opayTxnId     String   @unique
+  reference     String?
+  amount        Float
+  currency      String   @default("NGN")
+  status        String   // success | failed | pending | reversed
+  channel       String?  // card | bank | qr | wallet | ussd
+  customerName  String?
+  customerEmail String?
+  customerPhone String?
+  fee           Float    @default(0)
+  settledAmount Float    @default(0)
+  opayCreatedAt DateTime // timestamp from OPay
+  fetchedAt     DateTime @default(now())
+  auditStatus   String   @default("pending") // pending | verified | flagged | reconciled
+  auditNote     String?
+}
+
+// Daily audit run results
+model AuditLog {
+  id                String   @id @default(cuid())
+  auditDate         DateTime
+  totalTransactions Int
+  totalAmount       Float
+  successCount      Int
+  failedCount       Int
+  pendingCount      Int
+  flaggedCount      Int
+  discrepancies     String? // JSON string of issues found
+  summary           String
+  triggeredBy       String   @default("manual") // manual | daily | webhook
+  createdAt         DateTime @default(now())
+}
